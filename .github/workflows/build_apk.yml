@@ -1,0 +1,69 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Stockfish Quellcode laden
+        uses: actions/checkout@v4
+        with:
+          repository: official-stockfish/Stockfish
+          ref: sf_17
+          path: stockfish-src
+
+      - name: JDK 17 einrichten
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Gradle einrichten
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Android NDK installieren
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.3.11579264"
+
+      - name: Stockfish für Android ARM64 kompilieren
+        run: |
+          NDK_BIN="$ANDROID_HOME/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++"
+          cd stockfish-src/src
+          make net
+          make -j$(nproc) build ARCH=armv8 CXX="$NDK_BIN" LDFLAGS="-static-libstdc++"
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          cp stockfish "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libstockfish.so"
+          cd "$GITHUB_WORKSPACE"
+          rm -rf stockfish-src
+
+      - name: APK bauen
+        run: gradle assembleDebug
+
+      - name: Fertige APK als Download bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chess-Academy-AI-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: APK für das Release umbenennen
+        run: cp app/build/outputs/apk/debug/app-debug.apk "Chess Academy.apk"
+
+      - name: GitHub Release mit "Chess Academy.apk" veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Chess Academy Build ${{ github.run_number }}
+          files: Chess Academy.apk
